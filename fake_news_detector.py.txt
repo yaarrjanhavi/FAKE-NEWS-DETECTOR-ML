@@ -1,0 +1,226 @@
+pip install pandas scikit-learn nltk
+import pandas as pd
+import numpy as np
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer, WordNetLemmatizer
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import PassiveAggressiveClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+import itertools
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Download NLTK resources (run this once)
+nltk.download('stopwords')
+nltk.download('wordnet')
+stop_words = set(stopwords.words('english'))
+lemmatizer = WordNetLemmatizer()
+
+#STEP 1: Load Data and Create Labels
+try:
+    df_true = pd.read_csv('True.csv')
+    df_fake = pd.read_csv('Fake.csv')
+except FileNotFoundError:
+    print("Ensure 'True.csv' and 'Fake.csv' are in the same directory.")
+    exit()
+
+# Create 'label' column: 0 for Real (True), 1 for Fake (False)
+df_true['label'] = 0
+df_fake['label'] = 1
+
+# Combine the datasets
+df = pd.concat([df_true, df_fake]).sample(frac=1).reset_index(drop=True)
+
+# Drop columns we won't use immediately
+df = df.drop(['subject', 'date'], axis=1)
+
+print(f"Combined Dataset Shape: {df.shape}")
+print("\nLabel Distribution:\n", df['label'].value_counts())
+df.head()
+#STEP 2: Text Preprocessing
+def preprocess_text(text):
+    # Fill NaN values with an empty string
+    if pd.isna(text):
+        text = ''
+        
+    # Remove special characters, numbers, and convert to lower case
+    text = re.sub(r'[^a-zA-Z]', ' ', text.lower())
+    
+    # Tokenize, remove stopwords, and lemmatize
+    tokens = text.split()
+    tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words]
+    
+    return ' '.join(tokens)
+
+# Apply preprocessing to 'title' and 'text' columns and combine them
+df['content'] = df['title'] + ' ' + df['text']
+df['content'] = df['content'].apply(preprocess_text)
+
+#STEP 3: Feature Extraction (TF-IDF)
+X = df['content']
+y = df['label']
+
+# Split data (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Initialize TF-IDF Vectorizer
+# max_df=0.7 ignores terms that appear in more than 70% of the documents (too common)
+# max_features=5000 limits the vocabulary size to the 5000 most frequent words
+tfidf_vectorizer = TfidfVectorizer(max_df=0.7, max_features=5000, ngram_range=(1, 2))
+
+# Fit and transform the training data
+tfidf_train = tfidf_vectorizer.fit_transform(X_train)
+
+# ONLY transform the test data (do not fit to prevent data leakage)
+tfidf_test = tfidf_vectorizer.transform(X_test)
+
+print(f"\nTraining data shape after TF-IDF: {tfidf_train.shape}")
+#STEP 4: Model Training
+# Initialize the Passive Aggressive Classifier (an 'online' learning algorithm well-suited for text)
+pac = PassiveAggressiveClassifier(max_iter=50) 
+pac.fit(tfidf_train, y_train)
+
+#STEP 5: Model Evaluation
+# Predict on the test set
+y_pred = pac.predict(tfidf_test)
+
+# Calculate Accuracy
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nModel Accuracy: {round(accuracy*100, 2)}%")
+
+# Classification Report (Precision, Recall, F1-score)
+print("\nClassification Report:\n", classification_report(y_test, y_pred, target_names=['REAL (0)', 'FAKE (1)']))
+
+# Confusion Matrix Visualization
+cm = confusion_matrix(y_test, y_pred)
+plt.figure(figsize=(6, 5))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+            xticklabels=['REAL', 'FAKE'], yticklabels=['REAL', 'FAKE'])
+plt.title('Confusion Matrix')
+plt.ylabel('Actual Label')
+plt.xlabel('Predicted Label')
+plt.show()
+
+# Interpretation of Confusion Matrix (using the example from the output)
+TN = cm[0, 0] # True Negatives (Correctly predicted REAL)
+FP = cm[0, 1] # False Positives (REAL news predicted as FAKE)
+FN = cm[1, 0] # False Negatives (FAKE news predicted as REAL)
+TP = cm[1, 1] # True Positives (Correctly predicted FAKE)
+
+print(f"\nCorrectly predicted REAL (TN): {TN}")
+print(f"Correctly predicted FAKE (TP): {TP}")
+print(f"REAL news misclassified as FAKE (FP): {FP}")
+print(f"FAKE news misclassified as REAL (FN): {FN}")
+# --- STEP 6: Prediction Function ---
+
+def check_news_authenticity(news_article_text):
+    """
+    Takes raw text, preprocesses it, vectorizes it using the trained TFIDF,
+    and returns a classification using the trained PAC model.
+    """
+    
+    # 1. Preprocess the input text (using the same function as training)
+    clean_text = preprocess_text(news_article_text)
+    
+    # 2. Vectorize the text (MUST use the fitted vectorizer)
+    # TfidfVectorizer expects a list, so wrap the single string in one
+    vectorized_text = tfidf_vectorizer.transform([clean_text])
+    
+    # 3. Predict using the trained model
+    prediction = pac.predict(vectorized_text)
+    
+    # 4. Return the result
+    if prediction[0] == 0:
+        return "The news is likely REAL."
+    else:
+        return "The news is likely FAKE."
+
+#Test Cases
+
+# Example Real News (modify with a real headline/snippet)
+real_news_snippet = "WASHINGTON (Reuters) - President Joe Biden signed a new infrastructure bill into law on Monday, allocating $1.2 trillion for roads, bridges, and broadband internet across the nation, an administration official confirmed."
+print("\n--- Test 1 (Real) ---")
+print(check_news_authenticity(real_news_snippet))
+
+# Example Fake News (modify with a fabricated headline/snippet)
+fake_news_snippet = "EXCLUSIVE: The Moon is made of cheese and all politicians were replaced by lizards in 2018, according to an anonymous source deep within the Pentagon. The main stream media is hiding this fact!"
+print("\n--- Test 2 (Fake) ---")
+print(check_news_authenticity(fake_news_snippet))
+import pandas as pd
+import numpy as np
+import re
+import nltk
+# NOTE: Ensure you have run 'nltk.download('stopwords')' and 'nltk.download('wordnet')' 
+# in a preceding cell.
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+
+# --- Ensure these objects are defined and trained in previous cells ---
+# pac (PassiveAggressiveClassifier) is your trained model
+# tfidf_vectorizer is your fitted TfidfVectorizer
+# -------------------------------------------------------------------
+
+def preprocess_text(text):
+    """
+    Applies the same cleaning steps used during model training.
+    """
+    stop_words = set(stopwords.words('english'))
+    lemmatizer = WordNetLemmatizer()
+
+    if pd.isna(text):
+        text = ''
+        
+    text = re.sub(r'[^a-zA-Z]', ' ', text.lower())
+    tokens = text.split()
+    tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words]
+    
+    return ' '.join(tokens)
+
+
+def interactive_fake_news_detector(model, vectorizer):
+    """
+    Prompts the user for a news article and provides a prediction.
+    """
+    print("\n" + "="*50)
+    print(" FAKE NEWS DETECTOR ")
+    print("Please paste the news article or headline you want to check.")
+    print("Type 'exit' or 'quit' to end the session.")
+    print("="*50)
+
+    while True:
+        try:
+            # THIS LINE ASKS THE USER FOR INPUT
+            raw_input = input("\nEnter News Text: ")
+            
+            # Check for exit command
+            if raw_input.lower() in ['exit', 'quit']:
+                print("\nSession ended. TY!")
+                break
+
+            if not raw_input.strip():
+                print("Input cannot be empty. Please try again.")
+                continue
+
+            # 1. Preprocess the input text
+            clean_text = preprocess_text(raw_input)
+            
+            # 2. Vectorize the text (use the fitted vectorizer)
+            vectorized_text = vectorizer.transform([clean_text])
+            
+            # 3. Predict using the trained model
+            prediction = model.predict(vectorized_text)
+            
+            # 4. Output the result
+            if prediction[0] == 0:
+                print("\n✅ PREDICTION: This news is likely **REAL** (Label 0).")
+            else:
+                print("\n❌ PREDICTION: This news is likely **FAKE** (Label 1).")
+            
+        except Exception as e:
+            print(f"\nAn error occurred: {e}. Please ensure the model and vectorizer are trained and the input is valid.")
+            break
+
+interactive_fake_news_detector(pac, tfidf_vectorizer)

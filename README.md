@@ -1,10 +1,10 @@
 # Fake News Detection Project (TF-IDF + Passive Aggressive Classifier)
 
 ## Project Goal
-To classify a given news article as either REAL or FAKE using Natural Language Processing (NLP) and a Machine Learning classifier.
+To classify a given news article as either REAL or FAKE using Natural Language Processing (NLP) and a Machine Learning Classifier.
 
 ## Requirements
-This project requires the following Python libraries (listed in requirements.txt):
+This project requires the following Python Libraries (listed in requirements.txt):
 - pandas
 - numpy
 - scikit-learn
@@ -15,3 +15,4 @@ This project requires the following Python libraries (listed in requirements.txt
 2. **Setup:** Install dependencies: `pip install -r requirements.txt`
 
 3. **Execute:** Run the script: `python fake_news_detector.py`
+
